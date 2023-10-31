@@ -118,6 +118,7 @@ func (r *InboxReader) Start(ctxIn context.Context) error {
 	r.StopWaiter.Start(ctxIn, r)
 	hadError := false
 	r.CallIteratively(func(ctx context.Context) time.Duration {
+		// 定时执行
 		err := r.run(ctx, hadError)
 		if err != nil && !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "header not found") {
 			log.Warn("error reading inbox", "err", err)
@@ -218,6 +219,7 @@ func (r *InboxReader) CaughtUp() chan struct{} {
 }
 
 func (r *InboxReader) run(ctx context.Context, hadError bool) error {
+	// 获取最近一次获取过的L1上的delay区块
 	from, err := r.getNextBlockToRead()
 	if err != nil {
 		return err
@@ -239,16 +241,19 @@ func (r *InboxReader) run(ctx context.Context, hadError bool) error {
 	defer storeSeenBatchCount() // in case of error
 	for {
 
+		// 通过缓存或者L1-client获取L1的最新区块号
 		latestHeader, err := r.l1Reader.LastHeader(ctx)
 		if err != nil {
 			return err
 		}
 		config := r.config()
+		// 当前高度
 		currentHeight := latestHeader.Number
 
 		neededBlockAdvance := config.DelayBlocks + arbmath.SaturatingUSub(config.MinBlocksToRead, 1)
 		neededBlockHeight := arbmath.BigAddByUint(from, neededBlockAdvance)
 		checkDelayTimer := time.NewTimer(config.CheckDelay)
+		// 等L1出`neededBlockAdvance`个块
 	WaitForHeight:
 		for arbmath.BigLessThan(currentHeight, neededBlockHeight) {
 			select {
@@ -279,6 +284,7 @@ func (r *InboxReader) run(ctx context.Context, hadError bool) error {
 		missingSequencer := false
 
 		{
+			// 获取delay总数
 			checkingDelayedCount, err := r.delayedBridge.GetMessageCount(ctx, currentHeight)
 			if err != nil {
 				return err
@@ -287,10 +293,11 @@ func (r *InboxReader) run(ctx context.Context, hadError bool) error {
 			if err != nil {
 				return err
 			}
+			// 如果本地数据库保存的delay数量小于L1合约上的delay数量，将checkingDelayedCount设置为本地的，本地优先，同时标记有miss的delay消息
 			if ourLatestDelayedCount < checkingDelayedCount {
 				checkingDelayedCount = ourLatestDelayedCount
 				missingDelayed = true
-			} else if ourLatestDelayedCount > checkingDelayedCount {
+			} else if ourLatestDelayedCount > checkingDelayedCount { // 如果本地的delay数量大于远程的，说明有reorg，暂时先忽略reorg的情况
 				log.Info("backwards reorg of delayed messages", "from", ourLatestDelayedCount, "to", checkingDelayedCount)
 				err = r.tracker.ReorgDelayedTo(checkingDelayedCount, config.HardReorg)
 				if err != nil {
@@ -299,10 +306,12 @@ func (r *InboxReader) run(ctx context.Context, hadError bool) error {
 			}
 			if checkingDelayedCount > 0 {
 				checkingDelayedSeqNum := checkingDelayedCount - 1
+				// 获取delay message的hash
 				l1DelayedAcc, err := r.delayedBridge.GetAccumulator(ctx, checkingDelayedSeqNum, currentHeight)
 				if err != nil {
 					return err
 				}
+				// 从数据库里取？什么时候存进去的
 				dbDelayedAcc, err := r.tracker.GetDelayedAcc(checkingDelayedSeqNum)
 				if err != nil {
 					return err
@@ -313,6 +322,7 @@ func (r *InboxReader) run(ctx context.Context, hadError bool) error {
 			}
 		}
 
+		// 从合约中获取到Sequencer收到的batch的count
 		seenBatchCount, err = r.sequencerInbox.GetBatchCount(ctx, currentHeight)
 		if err != nil {
 			seenBatchCount = 0
@@ -389,6 +399,7 @@ func (r *InboxReader) run(ctx context.Context, hadError bool) error {
 			if to.Cmp(currentHeight) > 0 {
 				to.Set(currentHeight)
 			}
+			// sequencer batch
 			sequencerBatches, err := r.sequencerInbox.LookupBatchesInRange(ctx, from, to)
 			if err != nil {
 				return err
@@ -552,10 +563,12 @@ func (r *InboxReader) getPrevBlockForReorg(from *big.Int) (*big.Int, error) {
 }
 
 func (r *InboxReader) getNextBlockToRead() (*big.Int, error) {
+	// 初始为0
 	delayedCount, err := r.tracker.GetDelayedCount()
 	if err != nil {
 		return nil, err
 	}
+	// 给定配置文件中配置的起始值去读取L1
 	if delayedCount == 0 {
 		return new(big.Int).Set(r.firstMessageBlock), nil
 	}

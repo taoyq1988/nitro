@@ -725,6 +725,7 @@ func (s *batchSegments) CloseAndGetBytes() ([]byte, error) {
 	return fullMsg, nil
 }
 
+// 打包batch
 func (b *BatchPoster) encodeAddBatch(seqNum *big.Int, prevMsgNum arbutil.MessageIndex, newMsgNum arbutil.MessageIndex, message []byte, delayedMsg uint64) ([]byte, error) {
 	method, ok := b.seqInboxABI.Methods["addSequencerL2BatchFromOrigin0"]
 	if !ok {
@@ -780,6 +781,7 @@ func (b *BatchPoster) estimateGas(ctx context.Context, sequencerMessage []byte, 
 	if err != nil {
 		return 0, err
 	}
+	// 估算gas
 	gas, err := b.l1Reader.Client().EstimateGas(ctx, ethereum.CallMsg{
 		From: b.dataPoster.Sender(),
 		To:   &b.seqInboxAddr,
@@ -818,14 +820,17 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 		return false, fmt.Errorf("decoding batch position: %w", err)
 	}
 
+	// 初始值为0
 	dbBatchCount, err := b.inbox.GetBatchCount()
 	if err != nil {
 		return false, err
 	}
+	// 是否有可以推送的batch
 	if dbBatchCount > batchPosition.NextSeqNum {
 		return false, fmt.Errorf("attempting to post batch %v, but the local inbox tracker database already has %v batches", batchPosition.NextSeqNum, dbBatchCount)
 	}
 
+	// 构建一个building, 后续用于存储segments，即区块数据
 	if b.building == nil || b.building.startMsgCount != batchPosition.MessageCount {
 		b.building = &buildingBatch{
 			segments:      newBatchSegments(batchPosition.DelayedMessageCount, b.config(), b.backlog),
@@ -833,10 +838,12 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 			startMsgCount: batchPosition.MessageCount,
 		}
 	}
+	// 之前sequencer执行存储的当前messageCount，即区块号
 	msgCount, err := b.streamer.GetMessageCount()
 	if err != nil {
 		return false, err
 	}
+	// 判断当前message是否已经标记为了要发送到的远端batch
 	if msgCount <= batchPosition.MessageCount {
 		// There's nothing after the newest batch, therefore batch posting was not required
 		return false, nil
@@ -855,6 +862,7 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 	var l1BoundMinBlockNumber uint64
 	var l1BoundMinTimestamp uint64
 	hasL1Bound := config.l1BlockBound != l1BlockBoundIgnore
+	// 和延迟推送配置相关，忽略
 	if hasL1Bound {
 		var l1Bound *types.Header
 		var err error
@@ -912,12 +920,15 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 		}
 	}
 
+	// 从已经存储到batchPost的区块号开始，一直到当前最新的区块号，依次将区块数据添加到building中
 	for b.building.msgCount < msgCount {
+		// 获取之前sequencer存储到db中的编码后的区块数据
 		msg, err := b.streamer.GetMessage(b.building.msgCount)
 		if err != nil {
 			log.Error("error getting message from streamer", "error", err)
 			break
 		}
+		// 和延迟推送配置相关，忽略
 		if msg.Message.Header.BlockNumber < l1BoundMinBlockNumber || msg.Message.Header.Timestamp < l1BoundMinTimestamp {
 			log.Error(
 				"disabling L1 bound as batch posting message is close to the maximum delay",
@@ -940,6 +951,8 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 			)
 			break
 		}
+		// 将当前区块的message加入到segment中，编码格式为head.timestamp+head.blockNumber+[]byte(txs)
+		// success判断是否overflow
 		success, err := b.building.segments.AddMessage(msg)
 		if err != nil {
 			// Clear our cache
@@ -960,11 +973,13 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 		b.building.msgCount++
 	}
 
+	// 判断batch是否满了，或者已经到了最大的延迟推送区块的时间(forcePostBatch := time.Since(firstMsgTime) >= config.MaxDelay)
 	if !forcePostBatch || !b.building.haveUsefulMessage {
 		// the batch isn't full yet and we've posted a batch recently
 		// don't post anything for now
 		return false, nil
 	}
+	// 一个batch
 	sequencerMsg, err := b.building.segments.CloseAndGetBytes()
 	if err != nil {
 		return false, err
@@ -989,14 +1004,17 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 		}
 	}
 
+	// 估算gas
 	gasLimit, err := b.estimateGas(ctx, sequencerMsg, b.building.segments.delayedMsg)
 	if err != nil {
 		return false, err
 	}
+	// abi编码，发送到l1的[SequencerInBox]合约的[addSequencerL2BatchFromOrigin0]方法
 	data, err := b.encodeAddBatch(new(big.Int).SetUint64(batchPosition.NextSeqNum), batchPosition.MessageCount, b.building.msgCount, sequencerMsg, b.building.segments.delayedMsg)
 	if err != nil {
 		return false, err
 	}
+	// 标记下一个batchCount
 	newMeta, err := rlp.EncodeToBytes(batchPosterPosition{
 		MessageCount:        b.building.msgCount,
 		DelayedMessageCount: b.building.segments.delayedMsg,
@@ -1005,6 +1023,7 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 	if err != nil {
 		return false, err
 	}
+	// 发送交易
 	tx, err := b.dataPoster.PostTransaction(ctx,
 		firstMsgTime,
 		nonce,
@@ -1055,10 +1074,12 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 		// Setting the backlog to 0 here ensures that we don't lower compression as a result.
 		b.backlog = 0
 	}
+	// 当一个batch发送成功后清空building，building没有满的情况下下一次继续用
 	b.building = nil
 
 	// If we aren't queueing up transactions, wait for the receipt before moving on to the next batch.
 	if config.DataPoster.UseNoOpStorage {
+		// 会阻塞直到获取receipt
 		receipt, err := b.l1Reader.WaitForTxApproval(ctx, tx)
 		if err != nil {
 			return false, fmt.Errorf("error waiting for tx receipt: %w", err)
@@ -1070,6 +1091,7 @@ func (b *BatchPoster) maybePostSequencerBatch(ctx context.Context) (bool, error)
 }
 
 func (b *BatchPoster) Start(ctxIn context.Context) {
+	// 检查是否有没有发送成功的batch
 	b.dataPoster.Start(ctxIn)
 	b.redisLock.Start(ctxIn)
 	b.StopWaiter.Start(ctxIn, b)
@@ -1096,6 +1118,7 @@ func (b *BatchPoster) Start(ctxIn context.Context) {
 			b.building = nil
 			return b.config().PollInterval
 		}
+		// --
 		posted, err := b.maybePostSequencerBatch(ctx)
 		ephemeralError := errors.Is(err, AccumulatorNotFoundErr) || errors.Is(err, storage.ErrStorageRace)
 		if !ephemeralError {

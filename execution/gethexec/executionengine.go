@@ -322,6 +322,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		return nil, nil
 	}
 
+	// 压缩交易用于进行广播或者上到L1
 	msg, err := messageFromTxes(header, txes, hooks.TxErrors)
 	if err != nil {
 		return nil, err
@@ -337,11 +338,16 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		return nil, err
 	}
 
+	// 存入msg数据库, 估计streamer再异步把msg发送到L1上?
+	// preCheckNonce
+	// 1. op交易执行的时候BlocNum是L1的还是L2的: 应该是L2的，没有看到使用L1的区块的逻辑
+	// 2. arb交易定序时FIFO，nonce和gasPrice的去重和定序作用还有吗: nonce是需要连续的，但是没有使用gasPrice进行相同nonce的定序
 	err = s.streamer.WriteMessageFromSequencer(pos, msgWithMeta)
 	if err != nil {
 		return nil, err
 	}
 
+	// 调用eth，把生成的区块加入到区块链中，存储落盘
 	// Only write the block after we've written the messages, so if the node dies in the middle of this,
 	// it will naturally recover on startup by regenerating the missing block.
 	err = s.appendBlock(block, statedb, receipts, blockCalcTime)
@@ -381,6 +387,7 @@ func (s *ExecutionEngine) sequenceDelayedMessageWithBlockMutex(message *arbostyp
 		DelayedMessagesRead: delayedSeqNum + 1,
 	}
 
+	// 这里的逻辑和Sequencer一样的
 	err = s.streamer.WriteMessageFromSequencer(lastMsg+1, messageWithMeta)
 	if err != nil {
 		return nil, err

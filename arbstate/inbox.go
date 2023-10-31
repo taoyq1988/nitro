@@ -260,6 +260,7 @@ func NewInboxMultiplexer(backend InboxBackend, delayedMessagesRead uint64, dasRe
 	}
 }
 
+// batch类型
 const BatchSegmentKindL2Message uint8 = 0
 const BatchSegmentKindL2MessageBrotli uint8 = 1
 const BatchSegmentKindDelayedMessages uint8 = 2

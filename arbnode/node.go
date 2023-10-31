@@ -943,6 +943,7 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 	n.SyncMonitor.Initialize(n.InboxReader, n.TxStreamer, n.SeqCoordinator, n.Execution)
+	// geth
 	err := n.Stack.Start()
 	if err != nil {
 		return fmt.Errorf("error starting geth stack: %w", err)
@@ -971,10 +972,12 @@ func (n *Node) Start(ctx context.Context) error {
 			return fmt.Errorf("error populating feed backlog on startup: %w", err)
 		}
 	}
+	// 用于监听L2的message
 	err = n.TxStreamer.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("error starting transaction streamer: %w", err)
 	}
+	// 读取L1的message
 	if n.InboxReader != nil {
 		err = n.InboxReader.Start(ctx)
 		if err != nil {
@@ -987,9 +990,11 @@ func (n *Node) Start(ctx context.Context) error {
 	if n.MaintenanceRunner != nil {
 		n.MaintenanceRunner.Start(ctx)
 	}
+	// 负责用于执行delayed message来出块的Sequencer
 	if n.DelayedSequencer != nil {
 		n.DelayedSequencer.Start(ctx)
 	}
+	// sequencer执行生成区块，batchPoster将若干区块打包到一起, 发送batch到L1
 	if n.BatchPoster != nil {
 		n.BatchPoster.Start(ctx)
 	}
@@ -1013,6 +1018,7 @@ func (n *Node) Start(ctx context.Context) error {
 			n.BlockValidator = nil
 		}
 	}
+	// from L1
 	if n.BlockValidator != nil {
 		err = n.BlockValidator.Initialize(ctx)
 		if err != nil {
@@ -1026,6 +1032,7 @@ func (n *Node) Start(ctx context.Context) error {
 	if n.Staker != nil {
 		n.Staker.Start(ctx)
 	}
+	// 获取L1产生区块的信息
 	if n.L1Reader != nil {
 		n.L1Reader.Start(ctx)
 	}

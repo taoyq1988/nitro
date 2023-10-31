@@ -11,6 +11,7 @@ var (
 	sequencerBatchMetaPrefix     []byte = []byte("s") // maps a batch sequence number to BatchMetadata
 	delayedSequencedPrefix       []byte = []byte("a") // maps a delayed message count to the first sequencer batch sequence number with this delayed count
 
+	// Sequencer接收到的交易打包撑的区块的数量
 	messageCountKey        []byte = []byte("_messageCount")        // contains the current message count
 	delayedMessageCountKey []byte = []byte("_delayedMessageCount") // contains the current delayed message count
 	sequencerBatchCountKey []byte = []byte("_sequencerBatchCount") // contains the current sequencer message count

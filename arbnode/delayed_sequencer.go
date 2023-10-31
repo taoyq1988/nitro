@@ -99,7 +99,9 @@ func (d *DelayedSequencer) sequenceWithoutLockout(ctx context.Context, lastBlock
 		return nil
 	}
 
+	// 获取对于L2来说Finalize的区块高度
 	var finalized uint64
+	// eth2.0
 	if config.UseMergeFinality && lastBlockHeader.Difficulty.Sign() == 0 {
 		var err error
 		if config.RequireFullFinality {
@@ -115,6 +117,7 @@ func (d *DelayedSequencer) sequenceWithoutLockout(ctx context.Context, lastBlock
 		if currentNum < config.FinalizeDistance {
 			return nil
 		}
+		// eth1.0 - delay message默认落后20个区块后才被接受
 		finalized = uint64(currentNum - config.FinalizeDistance)
 	}
 
@@ -126,10 +129,12 @@ func (d *DelayedSequencer) sequenceWithoutLockout(ctx context.Context, lastBlock
 	// we won't find a new finalized message until FinalizeDistance blocks in the future.
 	d.waitingForFinalizedBlock = lastBlockHeader.Number.Uint64() + 1
 
+	// 获取数据库中delay的message总量
 	dbDelayedCount, err := d.inbox.GetDelayedCount()
 	if err != nil {
 		return err
 	}
+	// 获取了L2 block的nonce，在Sequencer模式上，nonce=上一个区块的nonce
 	startPos, err := d.getDelayedMessagesRead()
 	if err != nil {
 		return err
@@ -144,6 +149,7 @@ func (d *DelayedSequencer) sequenceWithoutLockout(ctx context.Context, lastBlock
 		if err != nil {
 			return err
 		}
+		// parentChainBlock应该是对应的message在L1的区块号
 		if parentChainBlockNumber > finalized {
 			// Message isn't finalized yet; stop here
 			d.waitingForFinalizedBlock = parentChainBlockNumber
@@ -171,11 +177,13 @@ func (d *DelayedSequencer) sequenceWithoutLockout(ctx context.Context, lastBlock
 		if err != nil {
 			return err
 		}
+		// 与远程做校验
 		if delayedBridgeAcc != lastDelayedAcc {
 			// Probably a reorg that hasn't been picked up by the inbox reader
 			return fmt.Errorf("inbox reader at delayed message %v db accumulator %v doesn't match delayed bridge accumulator %v at L1 block %v", pos-1, lastDelayedAcc, delayedBridgeAcc, finalized)
 		}
 		for i, msg := range messages {
+			// 每个delay message出一个块
 			err = d.exec.SequenceDelayedMessage(msg, startPos+uint64(i))
 			if err != nil {
 				return err
@@ -202,6 +210,7 @@ func (d *DelayedSequencer) run(ctx context.Context) {
 
 	for {
 		select {
+		// 当监听到L1的区块
 		case nextHeader, ok := <-headerChan:
 			if !ok {
 				log.Info("delayed sequencer: header channel close")

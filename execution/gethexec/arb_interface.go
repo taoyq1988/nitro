@@ -37,6 +37,7 @@ func (a *ArbInterface) Initialize(arbnode interface{}) {
 	a.arbNode = arbnode
 }
 
+// API接受交易，如果txPublisher是Sequencer节点的情况下，则发送给Sequencer
 func (a *ArbInterface) PublishTransaction(ctx context.Context, tx *types.Transaction, options *arbitrum_types.ConditionalOptions) error {
 	return a.txPublisher.PublishTransaction(ctx, tx, options)
 }

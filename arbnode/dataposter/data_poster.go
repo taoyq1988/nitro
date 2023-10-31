@@ -198,6 +198,7 @@ func (p *DataPoster) getNextNonceAndMaybeMeta(ctx context.Context) (uint64, []by
 	if err != nil {
 		return 0, nil, false, err
 	}
+	// queue是一个数据库，key为batchCount
 	lastQueueItem, err := p.queue.FetchLast(ctx)
 	if err != nil {
 		return 0, nil, false, fmt.Errorf("fetching last element from queue: %w", err)
@@ -391,6 +392,7 @@ func (p *DataPoster) saveTx(ctx context.Context, prevTx, newTx *storage.QueuedTr
 	if prevTx != nil && prevTx.Data.Nonce != newTx.Data.Nonce {
 		return fmt.Errorf("prevTx nonce %v doesn't match newTx nonce %v", prevTx.Data.Nonce, newTx.Data.Nonce)
 	}
+	// 保存最新的nonce和交易
 	if err := p.queue.Put(ctx, newTx.Data.Nonce, prevTx, newTx); err != nil {
 		return fmt.Errorf("putting new tx in the queue: %w", err)
 	}
@@ -403,6 +405,7 @@ func (p *DataPoster) sendTx(ctx context.Context, prevTx *storage.QueuedTransacti
 			return err
 		}
 	}
+	// 调用L1上链
 	if err := p.client.SendTransaction(ctx, newTx.FullTx); err != nil {
 		if !strings.Contains(err.Error(), "already known") && !strings.Contains(err.Error(), "nonce too low") {
 			log.Warn("DataPoster failed to send transaction", "err", err, "nonce", newTx.FullTx.Nonce(), "feeCap", newTx.FullTx.GasFeeCap(), "tipCap", newTx.FullTx.GasTipCap())
@@ -579,9 +582,11 @@ func (p *DataPoster) Start(ctxIn context.Context) {
 			log.Error("Failed to fetch tx queue contents", "err", err)
 			return minWait
 		}
+		// 发送到L1的交易
 		for index, tx := range queueContents {
 			backlogOfBatches := len(queueContents) - index - 1
 			replacing := false
+			// 因为某些原因交易没有发成功，需要重新发送
 			if now.After(tx.NextReplacement) {
 				replacing = true
 				err := p.replaceTx(ctx, tx, uint64(backlogOfBatches))

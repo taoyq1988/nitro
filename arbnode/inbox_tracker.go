@@ -265,6 +265,7 @@ func (t *InboxTracker) legacyGetDelayedMessageAndAccumulator(seqNum uint64) (*ar
 }
 
 func (t *InboxTracker) GetDelayedMessageAccumulatorAndParentChainBlockNumber(seqNum uint64) (*arbostypes.L1IncomingMessage, common.Hash, uint64, error) {
+	// 获取rlp编码的delayed message
 	delayedMessageKey := dbKey(rlpDelayedMessagePrefix, seqNum)
 	exists, err := t.db.Has(delayedMessageKey)
 	if err != nil {
@@ -358,6 +359,7 @@ func (t *InboxTracker) AddDelayedMessages(messages []*DelayedInboxMessage, hardR
 
 	batch := t.db.NewBatch()
 	for _, message := range messages {
+		// requestId -> log.message.Index 就是在Bridge合约里delay的交易的索引
 		seqNum, err := message.Message.Header.SeqNum()
 		if err != nil {
 			return err
@@ -367,9 +369,11 @@ func (t *InboxTracker) AddDelayedMessages(messages []*DelayedInboxMessage, hardR
 			return errors.New("unexpected delayed sequence number")
 		}
 
+		// 首先是本地数据库查出来的message的hash，与第一个message的上一个message的hash比较，应该要相等
 		if nextAcc != message.BeforeInboxAcc {
 			return errors.New("previous delayed accumulator mismatch")
 		}
+		// 增量hash：上一个message的hash + 当前message的hash
 		nextAcc = message.AfterInboxAcc()
 
 		delayedMsgKey := dbKey(rlpDelayedMessagePrefix, seqNum)
@@ -380,12 +384,14 @@ func (t *InboxTracker) AddDelayedMessages(messages []*DelayedInboxMessage, hardR
 		}
 		data := nextAcc.Bytes()
 		data = append(data, msgData...)
+		// 存数据库
 		err = batch.Put(delayedMsgKey, data)
 		if err != nil {
 			return err
 		}
 
 		if message.ParentChainBlockNumber != message.Message.Header.BlockNumber {
+			// 保存delay message对应的L1的block number，合约执行的时候用？
 			parentChainBlockNumberKey := dbKey(parentChainBlockNumberPrefix, seqNum)
 			parentChainBlockNumberByte := make([]byte, 8)
 			binary.BigEndian.PutUint64(parentChainBlockNumberByte, message.ParentChainBlockNumber)

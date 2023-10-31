@@ -850,6 +850,7 @@ func (s *TransactionStreamer) WriteMessageFromSequencer(pos arbutil.MessageIndex
 		return err
 	}
 
+	// 广播
 	if s.broadcastServer != nil {
 		if err := s.broadcastServer.BroadcastSingle(msgWithMeta, pos); err != nil {
 			log.Error("failed broadcasting message", "pos", pos, "err", err)
@@ -911,6 +912,7 @@ func (s *TransactionStreamer) writeMessages(pos arbutil.MessageIndex, messages [
 	}
 
 	select {
+	// 通知产生了新的msg, msg是一批区块的交易数据
 	case s.newMessageNotifier <- struct{}{}:
 	default:
 	}
@@ -948,6 +950,8 @@ func (s *TransactionStreamer) executeNextMsg(ctx context.Context, exec execution
 		return false
 	}
 	pos++
+	// 如果当前链上的区块号大于等于获取到的message的区块号，那么就不需要执行了
+	// 对于sequencer来说，就不需要消化自己产生的message
 	if pos >= msgCount {
 		return false
 	}
@@ -977,5 +981,6 @@ func (s *TransactionStreamer) executeMessages(ctx context.Context, ignored struc
 
 func (s *TransactionStreamer) Start(ctxIn context.Context) error {
 	s.StopWaiter.Start(ctxIn, s)
+	// 这里监听新产生的msg的数据
 	return stopwaiter.CallIterativelyWith[struct{}](&s.StopWaiterSafe, s.executeMessages, s.newMessageNotifier)
 }

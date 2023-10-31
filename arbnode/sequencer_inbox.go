@@ -193,6 +193,7 @@ func (i *SequencerInbox) LookupBatchesInRange(ctx context.Context, from, to *big
 		Addresses: []common.Address{i.address},
 		Topics:    [][]common.Hash{{batchDeliveredID}},
 	}
+	// 读取L1上from到to的区块范围内的SequencerInbox合约的SequencerBatchDelivered事件
 	logs, err := i.client.FilterLogs(ctx, query)
 	if err != nil {
 		return nil, err

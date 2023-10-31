@@ -408,6 +408,7 @@ func (s *Sequencer) PublishTransaction(parentCtx context.Context, tx *types.Tran
 		time.Now(),
 	}
 	select {
+	// 把交易放入执行队列
 	case s.txQueue <- queueItem:
 	case <-queueCtx.Done():
 		return queueCtx.Err()
@@ -431,6 +432,7 @@ func (s *Sequencer) PublishTransaction(parentCtx context.Context, tx *types.Tran
 func (s *Sequencer) preTxFilter(_ *params.ChainConfig, header *types.Header, statedb *state.StateDB, _ *arbosState.ArbosState, tx *types.Transaction, options *arbitrum_types.ConditionalOptions, sender common.Address, l1Info *arbos.L1Info) error {
 	if s.nonceCache.Caching() {
 		stateNonce := s.nonceCache.Get(header, statedb, sender)
+		// 检查nonce必须连续
 		err := MakeNonceError(sender, tx.Nonce(), stateNonce)
 		if err != nil {
 			nonceCacheRejectedCounter.Inc(1)
@@ -452,6 +454,7 @@ func (s *Sequencer) postTxFilter(header *types.Header, _ *arbosState.ArbosState,
 	if result.Err != nil && result.UsedGas > dataGas && result.UsedGas-dataGas <= s.config().MaxRevertGasReject {
 		return arbitrum.NewRevertReason(result)
 	}
+	// 当交易执行完成后，在nonceCache中保存的nonce是当前交易的nonce+1
 	newNonce := tx.Nonce() + 1
 	s.nonceCache.Update(header, sender, newNonce)
 	newAddrAndNonce := addressAndNonce{sender, newNonce}
@@ -662,6 +665,8 @@ func (s *Sequencer) precheckNonces(queueItems []txQueueItem) []txQueueItem {
 		if !pending {
 			pendingNonce = stateNonce
 		}
+		// nonce检查，不会按照gasPrice来顶替相同nonce的交易
+		// 低于stateNonce会被拒绝，高于pendingNonce会被缓存
 		txNonce := tx.Nonce()
 		if txNonce == pendingNonce {
 			pendingNonces[sender] = txNonce + 1
@@ -745,8 +750,9 @@ func (s *Sequencer) createBlock(ctx context.Context) (returnValue bool) {
 	for {
 		var queueItem txQueueItem
 		if s.txRetryQueue.Len() > 0 {
+			// 重试队列
 			queueItem = s.txRetryQueue.Pop()
-		} else if len(queueItems) == 0 {
+		} else if len(queueItems) == 0 { // 第一次循环，queueItems长度为0
 			var nextNonceExpiryChan <-chan time.Time
 			if nextNonceExpiryTimer != nil {
 				nextNonceExpiryChan = nextNonceExpiryTimer.C
@@ -800,6 +806,7 @@ func (s *Sequencer) createBlock(ctx context.Context) (returnValue bool) {
 			break
 		}
 		totalBatchSize += len(txBytes)
+		// 收取到一批交易
 		queueItems = append(queueItems, queueItem)
 	}
 
@@ -834,6 +841,7 @@ func (s *Sequencer) createBlock(ctx context.Context) (returnValue bool) {
 		return false
 	}
 
+	// L2: 11 12 13(L1: 9) -> EVM (9)
 	header := &arbostypes.L1IncomingMessageHeader{
 		Kind:        arbostypes.L1MessageType_L2Message,
 		Poster:      l1pricing.BatchPosterAddress,
@@ -969,6 +977,7 @@ func (s *Sequencer) Start(ctxIn context.Context) error {
 
 	}
 
+	// Sequencer隔一段时间创建一个区块
 	s.CallIteratively(func(ctx context.Context) time.Duration {
 		nextBlock := time.Now().Add(s.config().MaxBlockSpeed)
 		madeBlock := s.createBlock(ctx)

@@ -198,6 +198,7 @@ func ProduceBlockAdvanced(
 	blockGasLeft, _ := state.L2PricingState().PerBlockGasLimit()
 	l1BlockNum := l1Info.l1BlockNumber
 
+	// 每个区块都会追加一笔记录L1区块号的交易
 	// Prepend a tx before all others to touch up the state (update the L1 block num, pricing pools, etc)
 	startTx := InternalTxStartBlock(chainConfig.ChainID, l1Header.L1BaseFee, l1BlockNum, header, lastBlockHeader)
 	txes = append(types.Transactions{types.NewTx(startTx)}, txes...)
@@ -307,6 +308,7 @@ func ProduceBlockAdvanced(
 			statedb.SetTxContext(tx.Hash(), len(receipts)) // the number of successful state transitions
 
 			gasPool := gethGas
+			// 调用eth进行交易执行
 			receipt, result, err := core.ApplyTransactionWithResultFilter(
 				chainConfig,
 				chainContext,
@@ -391,6 +393,7 @@ func ProduceBlockAdvanced(
 		// append any scheduled redeems
 		redeems = append(redeems, result.ScheduledTxes...)
 
+		// 找到需要L2调用L1的交易
 		for _, txLog := range receipt.Logs {
 			if txLog.Address == ArbSysAddress {
 				// L2ToL1TransactionEventID is deprecated in upgrade 4, but it should to safe to make this code handle
@@ -432,6 +435,7 @@ func ProduceBlockAdvanced(
 		}
 	}
 
+	// 把区块nonce用作存储delayedMessagesRead数量
 	binary.BigEndian.PutUint64(header.Nonce[:], delayedMessagesRead)
 
 	FinalizeBlock(header, complete, statedb, chainConfig)

@@ -85,6 +85,7 @@ func (b *DelayedBridge) GetMessageCount(ctx context.Context, blockNumber *big.In
 		Context:     ctx,
 		BlockNumber: blockNumber,
 	}
+	// 获取通过L1直接发送的L2的delay交易的数量
 	bigRes, err := b.con.DelayedMessageCount(opts)
 	if err != nil {
 		return 0, err
